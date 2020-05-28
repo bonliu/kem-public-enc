@@ -32,9 +32,7 @@ int main() {
 	setSeed((unsigned char*)"random data :D:D:D",18);
 #endif
 	RSA_KEY K;
-	fprintf(stderr, "RSA_KEY K;\n");
 	rsa_keyGen(1024,&K);
-	fprintf(stderr, "rsa_keyGen(1024,&K);\n");
 	size_t i,j,ctLen,mLen = rsa_numBytesN(&K);
 	unsigned char* pt = malloc(mLen);
 	unsigned char* ct = malloc(mLen);

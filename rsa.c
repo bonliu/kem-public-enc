@@ -92,6 +92,8 @@ int rsa_keyGen(size_t keyBits, RSA_KEY* K)
 		NEWZ(one); mpz_set_ui(one, 1);
 		NEWZ(gcd); mpz_gcd(gcd, K->e, phi);	// Check if e is coprime to phi
 
+		// todo: try mpz_congurent
+
 		if ((mpz_cmp(gcd, one) == 0) && (mpz_cmp(K->e, one) > 0)) break;
 	}
 
@@ -104,11 +106,6 @@ int rsa_keyGen(size_t keyBits, RSA_KEY* K)
 		if (mpz_invert(K->d, K->e, phi) > 0) break;
 	}
 
-	// gmp_printf("p = %Zd\n", K->p);
-	// gmp_printf("q = %Zd\n", K->q);
-	// gmp_printf("n = %Zd\n", K->n);
-	// gmp_printf("e = %Zd\n", K->e);
-	// gmp_printf("d = %Zd\n", K->d);
 	return 0;
 }
 
@@ -117,13 +114,45 @@ size_t rsa_encrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 {
 	/* TODO: write this.  Use BYTES2Z to get integers, and then
 	 * Z2BYTES to write the output buffer. */
-	return 0; /* TODO: return should be # bytes written */
+	
+	//	inBuf = malloc(len)
+	//  #define NEWZ(x) mpz_t x; mpz_init(x)
+	NEWZ(m); BYTES2Z(m, inBuf, len);
+	/*
+		#define BYTES2Z(x,buf,len) mpz_import(x,len,-1,1,0,0,buf)
+			set x from an array of word data at buf
+			len many words are read,
+			each 1 byte, least significant first
+	*/
+
+	NEWZ(c); mpz_powm(c, m, K->e, K->n);
+	/* 
+		void mpz_powm (mpz_t rop, const mpz_t base, const mpz_t exp, const mpz_t mod)
+			- Set rop to (base raised to exp) modulo mod.
+	*/
+
+	size_t wordsWritten;
+	Z2BYTES(outBuf, wordsWritten, c);
+	/*
+		#define Z2BYTES(buf,len,x) mpz_export(buf,&len,-1,1,0,0,x)
+			- Fill (void *)buf with word data from (const mpz_t)x
+			- Each word will be 1 byte and least significant first
+			- The number of words produced is written to len
+	*/
+	return wordsWritten; /* TODO: return should be # bytes written */
 }
 size_t rsa_decrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 		RSA_KEY* K)
 {
 	/* TODO: write this.  See remarks above. */
-	return 0;
+
+	NEWZ(c); BYTES2Z(c, inBuf, len);
+	NEWZ(m); mpz_powm(m, c, K->d, K->n);
+
+	size_t wordsWritten;
+	Z2BYTES(outBuf, wordsWritten, m);
+
+	return wordsWritten;
 }
 
 size_t rsa_numBytesN(RSA_KEY* K)
