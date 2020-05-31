@@ -113,6 +113,37 @@ size_t ske_encrypt_file(const char* fnout, const char* fnin,
 		SKE_KEY* K, unsigned char* IV, size_t offset_out)
 {
 	/* TODO: write this.  Hint: mmap. */
+	// Read from file
+	int fd = open(fnin, O_RDONLY);
+	struct stat sb;
+	if (fstat(fd,&sb) == -1) {
+		fprintf(stderr, "[Encrypt] Can't get file size.\n");
+	}
+
+	// Map file into memory
+	size_t ptLen = sb.st_size;
+	char *pt = mmap(NULL, ptLen, PROT_READ, MAP_PRIVATE, fd, 0);
+	if (pt == MAP_FAILED) {
+		fprintf(stderr, "[Encrypt] MAP_FAILED");
+	}
+	
+	// Encrypt
+	unsigned char* ct[ptLen];
+	size_t ctLen = ske_encrypt((unsigned char*)ct, (unsigned char*)pt, ptLen, K, IV);
+
+	// Write to file (fnout)
+	close(fd);
+	fd = open(fnout, O_WRONLY);
+	if (fd == -1) fprintf(stderr, "[Encrypt] Can't open output file.\n");
+
+	if (ctLen != write(fd, ct, ctLen)) {
+		fprintf(stderr, "[Encrypt] Can't write ciphertext to file.\n");
+	}
+
+	// Clean up
+	close(fd);
+	munmap(pt, ptLen);
+
 	return 0;
 }
 size_t ske_decrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
@@ -152,7 +183,7 @@ size_t ske_decrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 		ERR_print_errors_fp(stderr);
 	}
 	EVP_CIPHER_CTX_free(ctx);
-	
+
 	memset(outBuf+ctLen, 0, 1);
 
 	return nWritten;
@@ -161,5 +192,37 @@ size_t ske_decrypt_file(const char* fnout, const char* fnin,
 		SKE_KEY* K, size_t offset_in)
 {
 	/* TODO: write this. */
+	// Read from file
+	int fd = open(fnin, O_RDONLY);
+	struct stat sb;
+	if (fstat(fd,&sb) == -1) {
+		fprintf(stderr, "[Decrypt] Can't get file size.\n");
+	}
+
+	// Map file into memory
+	size_t ctLen = sb.st_size;
+	char *ct = mmap(NULL, ctLen, PROT_READ, MAP_PRIVATE, fd, 0);
+	if (ct == MAP_FAILED) {
+		fprintf(stderr, "[Decrypt] MAP_FAILED");
+	}
+	
+	// Decrypt
+	size_t ptLen = ctLen - AES_BLOCK_SIZE - HM_LEN;
+	unsigned char *pt = malloc(ptLen);
+	ske_decrypt(pt, (unsigned char*)ct, ctLen, K);
+
+	// Write to file (fnout)
+	close(fd);
+	fd = open(fnout, O_WRONLY);
+	if (fd == -1) fprintf(stderr, "[Decrypt] Can't open output file.\n");
+
+	if (ptLen != write(fd, pt, ptLen)) {
+		fprintf(stderr, "[Decrypt] Can't write plaintext to file.\n");
+	}
+
+	// Clean up
+	close(fd);
+	munmap(ct, ctLen);
+
 	return 0;
 }
