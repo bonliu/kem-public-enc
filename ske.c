@@ -59,7 +59,7 @@ size_t ske_encrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 	 * for a hint.  Also, be sure to setup a random IV if none was given.
 	 * You can assume outBuf has enough space for the result. */
 
-	memset(outBuf,0,len);
+	// memset(outBuf,0,len);
 	
 	// Setup IV
 	size_t ivLen = AES_BLOCK_SIZE;
@@ -89,9 +89,9 @@ size_t ske_encrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 	EVP_CIPHER_CTX_free(ctx);
 
 	// Compute HMAC(IV|C) (32 bytes for SHA256) 
-	unsigned char *mac = malloc(32);
-	unsigned int macLen;
-	memset(mac,0,32);
+	unsigned int macLen = HM_LEN;
+	unsigned char *mac = malloc(macLen);
+	memset(mac,0,macLen);
 	
 	unsigned char *ivc = malloc(ivLen+ctLen);
 	memset(ivc,0,ivLen+ctLen+1);
@@ -99,14 +99,33 @@ size_t ske_encrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 	memcpy(ivc+ivLen, aesCt, ctLen);
 	size_t ivcLen = ivLen + ctLen;
 
-	HMAC(EVP_sha256(),K->hmacKey,KLEN_SKE,ivc,ivcLen,mac,&macLen);
+	// HMAC(EVP_sha256(),K->hmacKey,KLEN_SKE,ivc,ivcLen,mac,&macLen);
+	HMAC(EVP_sha256(),K->hmacKey,KLEN_SKE,ivc,ivcLen,mac, NULL);
 
 	// Construct output
+	memset(outBuf,0,ivcLen+1+macLen);
 	memcpy(outBuf, ivc, ivcLen);
 	memcpy(outBuf+ivcLen, "\0", 1);
 	memcpy(outBuf+ivcLen+1, mac, macLen);
 	memcpy(outBuf+ivcLen+1+macLen, "\0", 1);
 	// printf("%ld\n", sizeof(outBuf));
+
+	// FILE *fp = fopen("./notes/iv.txt", "wb");
+	// fwrite(iv,1,ivLen,fp);
+	// fclose(fp);
+
+	// fp = fopen("./notes/aes.txt", "wb");
+	// fwrite(aesCt,1,ctLen,fp);
+	// fclose(fp);
+
+	// fp = fopen("./notes/mac.txt", "wb");
+	// fwrite(mac,1,macLen,fp);
+	// fclose(fp);
+
+	// fp = fopen("./notes/encryptOut.txt", "wb");
+	// fwrite(outBuf,1,ivcLen+1+macLen,fp);
+	// fclose(fp);
+
 
 	// printf("ivcLen+1+macLen = %ld\n", ivcLen+1+macLen);
 	return ivcLen+1+macLen; /* TODO: should return number of bytes written, which
@@ -152,7 +171,7 @@ size_t ske_decrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 	}
 	// unsigned char pt[512];
 	// memset(pt,0,512);
-	int ctLen = ivcLen - ivLen + 1;
+	int ctLen = ivcLen - ivLen;
 	unsigned char ct[ctLen];
 	memcpy(ct, inBuf+ivLen, ctLen);
 	if (1!=EVP_DecryptUpdate(ctx,outBuf,&nWritten,ct,ctLen)) {
@@ -161,7 +180,8 @@ size_t ske_decrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 	}
 	EVP_CIPHER_CTX_free(ctx);
 
-	outBuf[nWritten] = "\0";
+	// outBuf[nWritten] = "\0";
+	memset(outBuf+ctLen, 0, 1);
 
 	return nWritten;
 }
