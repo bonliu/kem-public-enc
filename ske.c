@@ -121,19 +121,20 @@ size_t ske_encrypt_file(const char* fnout, const char* fnin,
 	}
 
 	// Map file into memory
-	size_t ptLen = sb.st_size;
+	size_t ptLen = sb.st_size + 1;	// + 1 to include null char
 	char *pt = mmap(NULL, ptLen, PROT_READ, MAP_PRIVATE, fd, 0);
 	if (pt == MAP_FAILED) {
 		fprintf(stderr, "[Encrypt] MAP_FAILED");
 	}
 	
 	// Encrypt
-	unsigned char* ct[ptLen];
-	size_t ctLen = ske_encrypt((unsigned char*)ct, (unsigned char*)pt, ptLen, K, IV);
+	size_t ctLen = ske_getOutputLen(ptLen);
+	unsigned char* ct = malloc(ctLen);
+	ske_encrypt((unsigned char *) ct, (unsigned char *) pt, ptLen, K, IV);
 
 	// Write to file (fnout)
 	close(fd);
-	fd = open(fnout, O_WRONLY);
+	fd = open(fnout, O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR);
 	if (fd == -1) fprintf(stderr, "[Encrypt] Can't open output file.\n");
 
 	if (ctLen != write(fd, ct, ctLen)) {
@@ -213,10 +214,11 @@ size_t ske_decrypt_file(const char* fnout, const char* fnin,
 
 	// Write to file (fnout)
 	close(fd);
-	fd = open(fnout, O_WRONLY);
+	fd = open(fnout, O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR);
 	if (fd == -1) fprintf(stderr, "[Decrypt] Can't open output file.\n");
 
-	if (ptLen != write(fd, pt, ptLen)) {
+	if (ptLen - 1  != write(fd, pt, ptLen - 1)) {
+		// -1 Exclude null char (in the original plaintext message)
 		fprintf(stderr, "[Decrypt] Can't write plaintext to file.\n");
 	}
 
