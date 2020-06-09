@@ -71,14 +71,12 @@ size_t ske_encrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 	}
 
 	// Encrypt message (AES)
-	// ske_encrypt(ct, (unsigned char*)message, len, K, IV)
-	// 	len = strlen(message) + 1
 	EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
 	if (1!=EVP_EncryptInit_ex(ctx,EVP_aes_256_ctr(),0,K->aesKey,iv)) {
 		ERR_print_errors_fp(stderr);
 	}
 
-	unsigned char aesCt[512]; memset(aesCt,0,512);
+	unsigned char aesCt[len]; memset(aesCt,0,len);
 	int msgLen = len -1;	// -1 to exclude null char
 	int ctLen;
 	if (1!=EVP_EncryptUpdate(ctx,aesCt,&ctLen,inBuf,msgLen)) {
@@ -113,38 +111,50 @@ size_t ske_encrypt_file(const char* fnout, const char* fnin,
 		SKE_KEY* K, unsigned char* IV, size_t offset_out)
 {
 	/* TODO: write this.  Hint: mmap. */
-	// Read from file
-	int fd = open(fnin, O_RDONLY);
+	// Map input into memory
+	int fdin = open(fnin, O_RDONLY);
 	struct stat sb;
-	if (fstat(fd,&sb) == -1) {
-		fprintf(stderr, "[Encrypt] Can't get file size.\n");
+	if (fstat(fdin,&sb) == -1) {
+		fprintf(stderr, "[SKE-ENC] Can't get input file size.\n");
+		exit(1);
+	}
+	size_t ptLen = sb.st_size + 1;	// + 1 to include null char
+	char *pt = mmap(NULL, ptLen, PROT_READ, MAP_PRIVATE, fdin, 0);
+	if (pt == MAP_FAILED) {
+		fprintf(stderr, "[SKE-ENC] INPUT MAP_FAILED.\n");
+		exit(1);
 	}
 
-	// Map file into memory
-	size_t ptLen = sb.st_size + 1;	// + 1 to include null char
-	char *pt = mmap(NULL, ptLen, PROT_READ, MAP_PRIVATE, fd, 0);
-	if (pt == MAP_FAILED) {
-		fprintf(stderr, "[Encrypt] MAP_FAILED");
+	// Map output into memory
+	int fdout = open(fnout, O_RDWR | O_CREAT | O_APPEND, S_IRWXU);
+	if (fstat(fdout,&sb) == -1) {
+		fprintf(stderr, "[SKE-ENC] Can't get output file size.\n");
+		exit(1);	
+	}
+	// Write some character to file to get desired file size
+	size_t ctLen = ske_getOutputLen(ptLen);
+	char *tmp = malloc(ctLen);
+	write(fdout, tmp, ctLen);
+
+	ctLen += offset_out;
+	unsigned char* ct = malloc(ctLen);
+	ct = mmap(NULL, ctLen, PROT_READ | PROT_WRITE, MAP_SHARED, fdout, 0);
+	if (ct == MAP_FAILED) {
+		fprintf(stderr, "[SKE-ENC] OUTPUT MAP_FAILED.\n");
+		exit(1);
 	}
 	
 	// Encrypt
-	size_t ctLen = ske_getOutputLen(ptLen);
-	unsigned char* ct = malloc(ctLen);
-	ske_encrypt((unsigned char *) ct, (unsigned char *) pt, ptLen, K, IV);
-
-	// Write to file (fnout)
-	close(fd);
-	fd = open(fnout, O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR);
-	if (fd == -1) fprintf(stderr, "[Encrypt] Can't open output file.\n");
-
-	if (ctLen != write(fd, ct, ctLen)) {
-		fprintf(stderr, "[Encrypt] Can't write ciphertext to file.\n");
-	}
-
+	ske_encrypt((unsigned char *) ct + offset_out,
+				(unsigned char *) pt,
+				ptLen, K, IV);
+	
 	// Clean up
-	close(fd);
-	munmap(pt, ptLen);
-
+	munmap(pt, ptLen - 1);
+	munmap(ct, ctLen);
+	close(fdin);
+	close(fdout);
+	
 	return 0;
 }
 size_t ske_decrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
@@ -158,6 +168,7 @@ size_t ske_decrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 	// Compute MAC
 	size_t macLen = HM_LEN;
 	size_t ivcLen = len - macLen - 1;	// -1 to exclude null char
+	printf("ivcLen = %ld\n", ivcLen);
 	unsigned char *mac = malloc(macLen);
 	HMAC(EVP_sha256(),K->hmacKey,KLEN_SKE,inBuf,ivcLen,mac,NULL);
 	
@@ -180,7 +191,6 @@ size_t ske_decrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 	unsigned char ct[ctLen];
 	memcpy(ct, inBuf+ivLen, ctLen);
 	if (1!=EVP_DecryptUpdate(ctx,outBuf,&nWritten,ct,ctLen)) {
-	// if (1!=EVP_DecryptUpdate(ctx,outBuf,&nWritten,inBuf+ivLen,ctLen)) {
 		ERR_print_errors_fp(stderr);
 	}
 	EVP_CIPHER_CTX_free(ctx);
@@ -193,38 +203,55 @@ size_t ske_decrypt_file(const char* fnout, const char* fnin,
 		SKE_KEY* K, size_t offset_in)
 {
 	/* TODO: write this. */
-	// Read from file
-	int fd = open(fnin, O_RDONLY);
+	// Map input into memory
+	int fdin = open(fnin, O_RDONLY);
 	struct stat sb;
-	if (fstat(fd,&sb) == -1) {
-		fprintf(stderr, "[Decrypt] Can't get file size.\n");
+	if (fstat(fdin,&sb) == -1) {
+		fprintf(stderr, "[SKE-DEC] Can't get input file size.\n");
+		exit(1);
+	}
+	size_t ctLen = sb.st_size;
+	printf("ctLen = %ld\n", ctLen);
+	char *ct = mmap(NULL, ctLen, PROT_READ, MAP_PRIVATE, fdin, 0);
+	if (ct == MAP_FAILED) {
+		fprintf(stderr, "[SKE-DEC] INPUT MAP_FAILED");
 	}
 
-	// Map file into memory
-	size_t ctLen = sb.st_size;
-	char *ct = mmap(NULL, ctLen, PROT_READ, MAP_PRIVATE, fd, 0);
-	if (ct == MAP_FAILED) {
-		fprintf(stderr, "[Decrypt] MAP_FAILED");
+	// Map output into memory
+	int fdout = open(fnout, O_RDWR | O_CREAT | O_APPEND, S_IRWXU);
+	if (fstat(fdin,&sb) == -1) {
+		fprintf(stderr, "[SKE-DEC] Can't get output file size.\n");
+		exit(1);
+	}
+	// Write some character to file to get desired file size
+	// -1 to exclude null char
+	size_t ptLen = ctLen - offset_in - AES_BLOCK_SIZE - HM_LEN - 1;
+	char *tmp = malloc(ptLen);
+	write(fdout, tmp, ptLen);	// Write will append null char. -1 later
+
+	// ptLen += offset_in;
+	unsigned char *pt = malloc(ptLen);
+	pt = mmap(NULL, ptLen - 1, PROT_READ | PROT_WRITE, MAP_SHARED, fdout, 0);
+	if (pt == MAP_FAILED) {
+		fprintf(stderr, "[SKE-DEC] OUTPUT MAP FAILED.\n");
+		exit(1);
 	}
 	
 	// Decrypt
-	size_t ptLen = ctLen - AES_BLOCK_SIZE - HM_LEN;
-	unsigned char *pt = malloc(ptLen);
-	ske_decrypt(pt, (unsigned char*)ct, ctLen, K);
+	ske_decrypt(pt, (unsigned char*)ct + offset_in, ctLen - offset_in, K);
+	// ske_decrypt(pt, ct + offset_in, ctLen - offset_in, K);
+	
 
-	// Write to file (fnout)
-	close(fd);
-	fd = open(fnout, O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR);
-	if (fd == -1) fprintf(stderr, "[Decrypt] Can't open output file.\n");
-
-	if (ptLen - 1  != write(fd, pt, ptLen - 1)) {
-		// -1 Exclude null char (in the original plaintext message)
-		fprintf(stderr, "[Decrypt] Can't write plaintext to file.\n");
-	}
+	// // Write to file (fnout)
+	// FILE * fp = fopen(fnout, "wb");
+	// // fseek(fp, offset_in, SEEK_SET);
+	// fwrite(pt, 1, ptLen-1, fp);	// -1 to exclude the null char (from mmap?)
 
 	// Clean up
-	close(fd);
 	munmap(ct, ctLen);
-
+	munmap(pt, ptLen);
+	close(fdin);
+	close(fdout);
+	
 	return 0;
 }
