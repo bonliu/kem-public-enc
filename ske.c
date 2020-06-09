@@ -2,6 +2,7 @@
 #include "prf.h"
 #include <openssl/sha.h>
 #include <openssl/evp.h>
+#include <openssl/err.h>
 #include <openssl/hmac.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,7 +44,7 @@ int ske_keyGen(SKE_KEY* K, unsigned char* entropy, size_t entLen)
 	} else {
 		setSeed(0,0);
 		randBytes(K->hmacKey, KLEN_SKE);
-		randBytes(K->aesKey, KLEN_SKE);
+		randBytes(K->aesKey,  KLEN_SKE);
 	}
 	
 	return 0;
@@ -58,78 +59,57 @@ size_t ske_encrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 	/* TODO: finish writing this.  Look at ctr_example() in aes-example.c
 	 * for a hint.  Also, be sure to setup a random IV if none was given.
 	 * You can assume outBuf has enough space for the result. */
-
-	// memset(outBuf,0,len);
 	
-	// Setup IV
+	/* Setup IV */
 	size_t ivLen = AES_BLOCK_SIZE;
 	unsigned char iv[ivLen];
 	if (IV) {
 		memcpy(iv,IV,ivLen);
 	} else {
-		setSeed(0,0);
+		setSeed(0, 0);
 		randBytes(iv, ivLen);
 	}
+	
+	unsigned char *aesCt = malloc(len);	// len = strlen(message) + 1
+	memset(aesCt, 0, len);
 
-	// Encrypt message (AES)
-	// ske_encrypt(ct, (unsigned char*)message, len, K, IV)
-	// 	len = strlen(message) + 1
+	/* Encrypt message (AES) */
 	EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
-	if (1!=EVP_EncryptInit_ex(ctx,EVP_aes_256_ctr(),0,K->aesKey,iv)) {
+	if (1 != EVP_EncryptInit_ex(ctx, EVP_aes_256_ctr(), 0, K->aesKey, iv)) {
 		ERR_print_errors_fp(stderr);
 	}
-
-	unsigned char aesCt[512];
-	memset(aesCt,0,512);
-	int msgLen = len -1;	// -1 to exclude null char
-	int ctLen;
-	if (1!=EVP_EncryptUpdate(ctx,aesCt,&ctLen,inBuf,msgLen)) {
+	int ctLen; // when strlen(message) == 14 --> ctLen = 15
+	if (1 != EVP_EncryptUpdate(ctx, aesCt, &ctLen, inBuf, len)) {
 		ERR_print_errors_fp(stderr);
 	}
 	EVP_CIPHER_CTX_free(ctx);
 
-	// Compute HMAC(IV|C) (32 bytes for SHA256) 
 	unsigned int macLen = HM_LEN;
-	unsigned char *mac = malloc(macLen);
-	memset(mac,0,macLen);
+	unsigned char mac[macLen];
+	memset(mac, 0, macLen);
 	
-	unsigned char *ivc = malloc(ivLen+ctLen);
-	memset(ivc,0,ivLen+ctLen+1);
-	memcpy(ivc,iv,ivLen);
-	memcpy(ivc+ivLen, aesCt, ctLen);
-	size_t ivcLen = ivLen + ctLen;
+	// Concat IV and C
+	size_t ivcLen = ivLen + ctLen;	// ctLen includes null char
+	unsigned char *ivc = malloc(ivcLen);
+	memset(ivc, 0, ivcLen);
+	memcpy(ivc, iv, ivLen);
+	memcpy(ivc + ivLen, aesCt, ctLen);
 
-	// HMAC(EVP_sha256(),K->hmacKey,KLEN_SKE,ivc,ivcLen,mac,&macLen);
-	HMAC(EVP_sha256(),K->hmacKey,KLEN_SKE,ivc,ivcLen,mac, NULL);
+	/* Compute HMAC(IV|C) (32 bytes for SHA256) */
+	HMAC(EVP_sha256(), K->hmacKey, KLEN_SKE, ivc, ivcLen, mac, NULL);
 
-	// Construct output
-	memset(outBuf,0,ivcLen+1+macLen);
+	/* Construct output */
+	memset(outBuf, 0, ivcLen + macLen);
 	memcpy(outBuf, ivc, ivcLen);
-	memcpy(outBuf+ivcLen, "\0", 1);
-	memcpy(outBuf+ivcLen+1, mac, macLen);
-	memcpy(outBuf+ivcLen+1+macLen, "\0", 1);
-	// printf("%ld\n", sizeof(outBuf));
+	memcpy(outBuf + ivcLen, mac, macLen);
 
-	// FILE *fp = fopen("./notes/iv.txt", "wb");
-	// fwrite(iv,1,ivLen,fp);
-	// fclose(fp);
+	/* Clean up */
+	free(aesCt);
+	free(ivc);
 
-	// fp = fopen("./notes/aes.txt", "wb");
-	// fwrite(aesCt,1,ctLen,fp);
-	// fclose(fp);
-
-	// fp = fopen("./notes/mac.txt", "wb");
-	// fwrite(mac,1,macLen,fp);
-	// fclose(fp);
-
-	// fp = fopen("./notes/encryptOut.txt", "wb");
-	// fwrite(outBuf,1,ivcLen+1+macLen,fp);
-	// fclose(fp);
-
-
-	// printf("ivcLen+1+macLen = %ld\n", ivcLen+1+macLen);
-	return ivcLen+1+macLen; /* TODO: should return number of bytes written, which
-	             hopefully matches ske_getOutputLen(...). */
+	/* TODO: should return number of bytes written, 
+			 which hopefully matches ske_getOutputLen(...). */
+	return ivcLen + macLen;
 }
 size_t ske_encrypt_file(const char* fnout, const char* fnin,
 		SKE_KEY* K, unsigned char* IV, size_t offset_out)
@@ -145,45 +125,42 @@ size_t ske_decrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 	 * Otherwise, return the number of bytes written.  See aes-example.c
 	 * for how to do basic decryption. */
 
-	// Compute MAC
-	size_t macLen = 32;
-	size_t ivcLen = len - macLen - 1;	// -1 to exclude null char
-	unsigned char *mac = malloc(32);
-	HMAC(EVP_sha256(),K->hmacKey,KLEN_SKE,inBuf,ivcLen,mac,NULL);
+	/* Compute MAC */
+	size_t macLen = HM_LEN;
+	size_t ivcLen = len - macLen;	// len includes null char
+	unsigned char mac[macLen];
+	// from ske_encrypt: 
+	// HMAC(EVP_sha256(), K->hmacKey, KLEN_SKE, ivc, ivcLen, mac, NULL);
+	HMAC(EVP_sha256(), K->hmacKey, KLEN_SKE, inBuf, ivcLen, mac, NULL);
 	
-	// Autheticate
-	if (memcmp(mac, inBuf+ivcLen+1, HM_LEN) != 0) return -1;
-	// size_t i;
-	// for (i = 0; i < macLen; i++) {
-	// 	if (mac[i] != inBuf[ivcLen+i+1]) return -1;
-	// }
-
-	// Decrypt
+	/* Autheticate */
+	if (memcmp(mac, inBuf + ivcLen, HM_LEN) != 0) {
+		fprintf(stderr, "WRONG MAC\n");
+		return -1;
+	}
+	
 	// Extract iv
 	size_t ivLen = AES_BLOCK_SIZE;
 	unsigned char iv[ivLen];
-	memcpy(iv,inBuf,ivLen);
+	memcpy(iv, inBuf, ivLen);
 
-	int nWritten;
-	EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
-	if (1!=EVP_DecryptInit_ex(ctx,EVP_aes_256_ctr(),0,K->aesKey,iv)) {
-		ERR_print_errors_fp(stderr);
-	}
-	// unsigned char pt[512];
-	// memset(pt,0,512);
+	// Extract ciphertext
 	int ctLen = ivcLen - ivLen;
 	unsigned char ct[ctLen];
-	memcpy(ct, inBuf+ivLen, ctLen);
-	if (1!=EVP_DecryptUpdate(ctx,outBuf,&nWritten,ct,ctLen)) {
-	// if (1!=EVP_DecryptUpdate(ctx,outBuf,&nWritten,inBuf+ivLen,ctLen)) {
+	memcpy(ct, inBuf + ivLen, ctLen);
+
+	/* Decrypt */
+	EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+	if (1 != EVP_DecryptInit_ex(ctx, EVP_aes_256_ctr(), 0, K->aesKey, iv)) {
+		ERR_print_errors_fp(stderr);
+	}
+	int msgLen;
+	if (1 != EVP_DecryptUpdate(ctx, outBuf, &msgLen, ct, ctLen)) {
 		ERR_print_errors_fp(stderr);
 	}
 	EVP_CIPHER_CTX_free(ctx);
 
-	// outBuf[nWritten] = "\0";
-	memset(outBuf+ctLen, 0, 1);
-
-	return nWritten;
+	return msgLen;
 }
 size_t ske_decrypt_file(const char* fnout, const char* fnin,
 		SKE_KEY* K, size_t offset_in)

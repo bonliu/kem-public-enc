@@ -64,6 +64,7 @@ int rsa_keyGen(size_t keyBits, RSA_KEY* K)
 	int isPrime = 0;
 	unsigned char* p = malloc(len);
 	while (!isPrime) {
+		memset(p, 0, len);
 		assert(randBytes(p, len) == 0);
 		BYTES2Z(K->p, (const void*)p, len);
 		isPrime = ISPRIME(K->p);
@@ -72,6 +73,7 @@ int rsa_keyGen(size_t keyBits, RSA_KEY* K)
 	isPrime = 0;
 	unsigned char* q = malloc(len);
 	while (!isPrime) {
+		memset(q, 0, len);
 		assert(randBytes(q, len) == 0);
 		BYTES2Z(K->q, (const void*)q, len);
 		isPrime = ISPRIME(K->q);
@@ -81,8 +83,8 @@ int rsa_keyGen(size_t keyBits, RSA_KEY* K)
 	mpz_mul(K->n, K->p, K->q);
 
 	// Calculate totient: phi(n) = (p-1)*(q-1)
-	NEWZ(p_minus_1); mpz_sub_ui(p_minus_1, K->p, (unsigned long int)1);
-	NEWZ(q_minus_1); mpz_sub_ui(q_minus_1, K->q, (unsigned long int)1);
+	NEWZ(p_minus_1); mpz_sub_ui(p_minus_1, K->p, (unsigned long int) 1);
+	NEWZ(q_minus_1); mpz_sub_ui(q_minus_1, K->q, (unsigned long int) 1);
 	NEWZ(phi); mpz_mul(phi, p_minus_1, q_minus_1);
 	
 	// Choose e such that 1 < e < phi(n), and e is co-prime to phi(n)
@@ -98,13 +100,18 @@ int rsa_keyGen(size_t keyBits, RSA_KEY* K)
 	}
 
 	// Choose d such that e*d congurent 1 (mod phi(n))
-	while (1) { 
-		/* 
-			int mpz_invert (mpz_t rop, const mpz_t op1, const mpz_t op2)
-				- Compute the inverse of op1 modulo op2 and put the result in rop. 
-		*/
-		if (mpz_invert(K->d, K->e, phi) > 0) break;
-	}
+	mpz_invert(K->d, K->e, phi);
+	/* 
+		int mpz_invert (mpz_t rop, const mpz_t op1, const mpz_t op2)
+			- Compute the inverse of op1 modulo op2 and put the result in rop. 
+	*/
+	
+	// printf("sizeof(mp_limb_t) = %ld\n", sizeof(mp_limb_t));
+	// printf("size of n: %ld\n", mpz_size(K->n));
+	// printf("size of p: %ld\n", mpz_size(K->p));
+	// printf("size of q: %ld\n", mpz_size(K->q));
+	// printf("size of e: %ld\n", mpz_size(K->e));
+	// printf("size of d: %ld\n", mpz_size(K->d));
 
 	return 0;
 }
