@@ -114,8 +114,56 @@ size_t ske_encrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 size_t ske_encrypt_file(const char* fnout, const char* fnin,
 		SKE_KEY* K, unsigned char* IV, size_t offset_out)
 {
+	/* NOTE: offset determines where to begin writing to the output file.
+ * set to 0 to erase the file and write it from scratch. */
+
 	/* TODO: write this.  Hint: mmap. */
-	return 0;
+
+	/* Open input file */
+	int fdin = open(fnin, O_RDONLY);
+	struct stat sb;
+	if (fstat(fdin, &sb) == -1) {
+		perror("[SKE-ENC] Open input file");
+		exit(EXIT_FAILURE);
+	}
+	size_t msgLen = sb.st_size;
+
+	/* Map input file to memory */
+	unsigned char *inmap = mmap(NULL, msgLen, PROT_READ, MAP_PRIVATE, fdin, 0);
+	if (inmap == MAP_FAILED) {
+		perror("[SKE-ENC] Map input file");
+		exit(EXIT_FAILURE);
+	}
+	close(fdin);
+	
+	/* Open output file */
+	int fdout = open(fnout, O_RDWR | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR);
+	if (fstat(fdout, &sb) == -1) {
+		perror("[SKE-ENC] Open output file");
+		exit(EXIT_FAILURE);
+	}
+	msgLen += 1; // include null char
+	size_t ctLen = ske_getOutputLen(msgLen);// + offset_out;
+	write(fdout, "a", ctLen);
+	
+	/* Map output file to memory */
+	unsigned char *outmap = mmap(NULL, ctLen + offset_out, 
+								 PROT_WRITE, MAP_SHARED, fdout, 0);
+	if (outmap == MAP_FAILED) {
+		perror("[SKE-ENC] Map output file");
+		exit(EXIT_FAILURE);
+	}
+	close(fdout);
+
+	/* Encrypt */
+	size_t bytesWritten = ske_encrypt(outmap + offset_out,
+									  inmap, msgLen, K, IV);
+
+	/* Clean up */
+	munmap(inmap, msgLen - 1);
+	munmap(outmap, ctLen + offset_out);	
+
+	return bytesWritten;
 }
 size_t ske_decrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 		SKE_KEY* K)
@@ -165,6 +213,51 @@ size_t ske_decrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 size_t ske_decrypt_file(const char* fnout, const char* fnin,
 		SKE_KEY* K, size_t offset_in)
 {
+	/* NOTE: offset determines where to begin reading the input file. */
 	/* TODO: write this. */
+
+	/* Open input file */
+	int fdin = open(fnin, O_RDONLY);
+	struct stat sb;
+	if (fstat(fdin, &sb) == -1) {
+		perror("[SKE-DEC] Open input file");
+		exit(EXIT_FAILURE);
+	}
+	size_t ctLen = sb.st_size;
+
+	/* Map input file to memory */
+	unsigned char *inmap = mmap(NULL, ctLen, PROT_READ, MAP_PRIVATE, fdin, 0);
+	if (inmap == MAP_FAILED) {
+		perror("[SKE-DEC] Map input file");
+		exit(EXIT_FAILURE);
+	}
+	close(fdin);
+	
+	/* Open output file */
+	int fdout = open(fnout, O_RDWR | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR);
+	if (fstat(fdout, &sb) == -1) {
+		perror("[DKE-DEC] Open output file");
+		exit(EXIT_FAILURE);
+	}
+	/* Exclude null char */
+	size_t msgLen = ctLen - offset_in - AES_BLOCK_SIZE - HM_LEN - 1;
+	write(fdout, "a", msgLen);
+
+	/* Map output file to memory */
+	unsigned char *outmap = mmap(NULL, msgLen, PROT_WRITE, MAP_SHARED, fdout, 0);
+	if (outmap == MAP_FAILED) {
+		perror("[SKE-DEC] Map output file");
+		exit(EXIT_FAILURE);
+	}
+	close(fdout);
+
+	/* Decrypt */
+	// ske_decrypt((unsigned char*)pt,ct,ctLen,K);
+	ske_decrypt(outmap, inmap + offset_in, ctLen - offset_in, K);
+
+	/* Clean up */
+	munmap(inmap, ctLen);
+	munmap(outmap, msgLen);
+	
 	return 0;
 }
