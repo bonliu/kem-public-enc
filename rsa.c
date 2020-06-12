@@ -101,17 +101,6 @@ int rsa_keyGen(size_t keyBits, RSA_KEY* K)
 
 	// Choose d such that e*d congurent 1 (mod phi(n))
 	mpz_invert(K->d, K->e, phi);
-	/* 
-		int mpz_invert (mpz_t rop, const mpz_t op1, const mpz_t op2)
-			- Compute the inverse of op1 modulo op2 and put the result in rop. 
-	*/
-	
-	// printf("sizeof(mp_limb_t) = %ld\n", sizeof(mp_limb_t));
-	// printf("size of n: %ld\n", mpz_size(K->n));
-	// printf("size of p: %ld\n", mpz_size(K->p));
-	// printf("size of q: %ld\n", mpz_size(K->q));
-	// printf("size of e: %ld\n", mpz_size(K->e));
-	// printf("size of d: %ld\n", mpz_size(K->d));
 
 	return 0;
 }
@@ -122,8 +111,6 @@ size_t rsa_encrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 	/* TODO: write this.  Use BYTES2Z to get integers, and then
 	 * Z2BYTES to write the output buffer. */
 	
-	//	inBuf = malloc(len)
-	//  #define NEWZ(x) mpz_t x; mpz_init(x)
 	NEWZ(m); BYTES2Z(m, inBuf, len);
 	/*
 		#define BYTES2Z(x,buf,len) mpz_import(x,len,-1,1,0,0,buf)

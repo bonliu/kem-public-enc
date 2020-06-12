@@ -177,8 +177,7 @@ size_t ske_decrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 	size_t macLen = HM_LEN;
 	size_t ivcLen = len - macLen;	// len includes null char
 	unsigned char mac[macLen];
-	// from ske_encrypt: 
-	// HMAC(EVP_sha256(), K->hmacKey, KLEN_SKE, ivc, ivcLen, mac, NULL);
+	
 	HMAC(EVP_sha256(), K->hmacKey, KLEN_SKE, inBuf, ivcLen, mac, NULL);
 	
 	/* Autheticate */
@@ -244,7 +243,8 @@ size_t ske_decrypt_file(const char* fnout, const char* fnin,
 	write(fdout, "a", msgLen);
 
 	/* Map output file to memory */
-	unsigned char *outmap = mmap(NULL, msgLen, PROT_WRITE, MAP_SHARED, fdout, 0);
+	unsigned char *outmap = mmap(NULL, msgLen, PROT_WRITE,
+								 MAP_SHARED, fdout, 0);
 	if (outmap == MAP_FAILED) {
 		perror("[SKE-DEC] Map output file");
 		exit(EXIT_FAILURE);
@@ -252,7 +252,6 @@ size_t ske_decrypt_file(const char* fnout, const char* fnin,
 	close(fdout);
 
 	/* Decrypt */
-	// ske_decrypt((unsigned char*)pt,ct,ctLen,K);
 	ske_decrypt(outmap, inmap + offset_in, ctLen - offset_in, K);
 
 	/* Clean up */
