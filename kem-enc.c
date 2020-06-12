@@ -61,40 +61,39 @@ int kem_encrypt(const char* fnOut, const char* fnIn, RSA_KEY* K)
 	 * encrypt fnIn with SK; concatenate encapsulation and cihpertext;
 	 * write to fnOut. */
 
-	// RSA-KEM(X) := RSA(X)|H(X) = RSA(X)|SHA256(X)
-	/* Select x in random */
+  /* Generate X */
 	setSeed(0, 0);
-	unsigned char x[KLEN_SKE];	// x should be as much entropy as the key
-	randBytes(x, KLEN_SKE);
+	size_t xLen = rsa_numBytesN(K);
+	unsigned char *X = malloc(xLen); X[xLen - 1] = 0;
+	randBytes(X, xLen - 1);	// Avoid reduction mod n
 
-	/* Apply RSA on x */
-	size_t rsaNB = rsa_numBytesN(K);
-	unsigned char rsaCt[rsaNB];
-	rsa_encrypt(rsaCt, x, rsaNB, K);
-
-	/* Compute H := SHA256 */
-	unsigned char H[HASHLEN];
-	// HMAC(EVP_sha256(), KDF_KEY, HASHLEN, x, KLEN_SKE, hmac, NULL);
-	SHA256(x, rsaNB, H);
-	
-	/* write RSA-KEM(X) to file */
+	/* Open output file */
 	FILE *fp = fopen(fnOut, "wb");
 	if (fp == NULL) {
-		perror("[ENC] Error: ");
-		exit(1);
+		perror("[KEM-ENC] Output file");
+		exit(EXIT_FAILURE);
 	}
-	fwrite(rsaCt, 1, rsaNB, fp);
+
+	/* (RSA) Encrypt X */
+	unsigned char *xEnc = malloc(xLen);
+	rsa_encrypt(xEnc, X, xLen, K);
+	fwrite(xEnc, 1, xLen, fp);
+
+	/* H := SHA256 */
+	unsigned char H[HASHLEN];
+	SHA256(X, xLen, H);
 	fwrite(H, 1, HASHLEN, fp);
+
 	fclose(fp);
-
-	/* Compute key for SKE 
-	   NOTE: HMAC-SHA512 will compute inside ske_keyGen() */
+	/* (SKE) Encrypt fnIn */
+	size_t offset = rsa_numBytesN(K) + HASHLEN;
 	SKE_KEY SK;
-	ske_keyGen(&SK, x, KLEN_SKE);
+	ske_keyGen(&SK, X, xLen);
+	ske_encrypt_file(fnOut, fnIn, &SK, NULL, offset);
 
-	/* Encrypt fnIn */
-	ske_encrypt_file(fnOut, fnIn, &SK, NULL, rsaNB + HASHLEN);
-
+	free(X);
+	free(xEnc);
+  
 	return 0;
 }
 
@@ -103,38 +102,37 @@ int kem_decrypt(const char* fnOut, const char* fnIn, RSA_KEY* K)
 {
 	/* TODO: write this. */
 	/* step 1: recover the symmetric key */
+	size_t xLen = rsa_numBytesN(K);
+	unsigned char *X    = malloc(xLen);
+	unsigned char *xEnc = malloc(xLen);
 	FILE *fp = fopen(fnIn, "rb");
 	if (fp == NULL) {
-		perror("[KEM-DEC] Error: ");
-		exit(1);
+		perror("[KEM-DEC] Input file");
+		exit(EXIT_FAILURE);
 	}
+	fread(xEnc, 1, xLen, fp);
+	rsa_decrypt(X, xEnc, xLen, K);
 	
-	size_t rsaCtLen = rsa_numBytesN(K);
-	unsigned char* rsaCt = malloc(rsaCtLen);
-	unsigned char* rsaPt = malloc(rsaCtLen);
-	fread(rsaCt, 1, rsaCtLen, fp);
-	rsa_decrypt(rsaPt, rsaCt, rsaCtLen, K);
-
 	/* step 2: check decapsulation */
-	unsigned char* mac = malloc(HASHLEN);
-	unsigned char* inMac = malloc(HASHLEN);
-	fread(inMac, 1, HASHLEN, fp);
-	SHA256(rsaPt, rsaCtLen, mac);
-	if (memcmp(mac, inMac, HASHLEN) != 0) {
-		fprintf(stderr, "INCORRECT MAC\n");
-		exit(1);
+	unsigned char   H[HASHLEN];
+	unsigned char mac[HASHLEN];
+	SHA256(X, xLen, H);
+	fread(mac, 1, HASHLEN, fp);
+	if (memcmp(H, mac, HASHLEN) != 0) {
+		fprintf(stderr, "WRONG MAC\n");
+		exit(EXIT_FAILURE);
 	}
-	fclose(fp);
 
+	fclose(fp);
 	/* step 3: derive key from ephemKey and decrypt data. */
-	// size_t inLen = strlen(fnIn);
-	// size_t SKECtLen = inLen - rsaCtLen - HASHLEN;
+	size_t offset = xLen + HASHLEN;
 	SKE_KEY SK;
-	ske_keyGen(&SK, rsaPt, rsaCtLen);
-	ske_decrypt_file(fnOut, fnIn, &SK, rsaCtLen + HASHLEN);
-	// ske_decrypt((unsigned char *) fnOut, 
-	// 			(unsigned char *) fnIn + rsaCtLen + HASHLEN,
-	// 			SKECtLen, &SK);
+	ske_keyGen(&SK, X, xLen);
+	ske_decrypt_file(fnOut, fnIn, &SK, offset);
+
+	free(X);
+	free(xEnc);
+  
 	return 0;
 }
 
@@ -206,70 +204,61 @@ int main(int argc, char *argv[]) {
 	 * like private keys when you're done with them (see the
 	 * rsa_shredKey function). */
 	RSA_KEY K;
-	FILE *rsaPub;
-	FILE *rsaPvt;
+	FILE *rsaPub, *rsaPvt;
 	switch (mode) {
 		case ENC:
-		{
-			printf("[ENC] fnIn: %s\n", fnIn);
-			printf("[ENC] fnOut: %s\n", fnOut);
-			printf("[ENC] fnKey: %s\n", fnKey);
-			// strcat(fnKey, ".pub");
+			/* Read Public key from file */
 			rsaPub = fopen(fnKey, "rb");
 			if (rsaPub == NULL) {
-				perror("[ENC] Error: ");
-				exit(1);
-			} else {
-				rsa_readPublic(rsaPub, &K);
-				fclose(rsaPub);
-				kem_encrypt(fnOut, fnIn, &K);
+				perror("[ENC] Public key");
+				exit(EXIT_FAILURE);
 			}
-
+			rsa_readPublic(rsaPub, &K);
+			fclose(rsaPub);
 			
+			/* Encrypt */
+			kem_encrypt(fnOut, fnIn, &K);
+
 			rsa_shredKey(&K);
 			break;
-		}
 		case DEC:
-			printf("[DEC] fnIn: %s\n", fnIn);
-			printf("[DEC] fnOut: %s\n", fnOut);
-			printf("[DEC] fnKey: %s\n", fnKey);
+			/* Read Private key from file */
 			rsaPvt = fopen(fnKey, "rb");
 			if (rsaPvt == NULL) {
-				perror("[DEC] Error: ");
-				exit(1);
-			} else {
-				rsa_readPrivate(rsaPvt, &K);
-				kem_decrypt(fnOut, fnIn, &K);
+				perror("[DEC] Private key");
+				exit(EXIT_FAILURE);
 			}
-
+			rsa_readPrivate(rsaPvt, &K);
 			fclose(rsaPvt);
+
+			/* Decrypt */
+			kem_decrypt(fnOut, fnIn, &K);
+
 			rsa_shredKey(&K);
 			break;
 		case GEN:
-			printf("[GEN] fnIn: %s\n", fnIn);
-			printf("[GEN] fnOut: %s\n", fnOut);
-			printf("[GEN] optarg: %s\n", optarg);
-			// nBits corresponds to the length of new RSA key
+			/* ./kem-enc -b 2048 -g /tmp/testkey */
+			/* Generate RSA key */
 			rsa_keyGen(nBits, &K);
-			/* Write RSA private key*/
+
+			/* Private key */
 			rsaPvt = fopen(fnOut, "wb");
 			if (rsaPvt == NULL) {
-				perror("[GEN RSA PVT] Error: ");
-				exit(1);
-			} else {
-				rsa_writePrivate(rsaPvt, &K);
-				fclose(rsaPvt);
+				perror("[GEN] Private key");
+				exit(EXIT_FAILURE);
 			}
-
+			rsa_writePrivate(rsaPvt, &K);
+			fclose(rsaPvt);
+			
+			/* Public key */
 			strcat(fnOut, ".pub");
 			rsaPub = fopen(fnOut, "wb");
 			if (rsaPub == NULL) {
-				perror("[GEN RSA PUB] Error: ");
-				exit(1);
-			} else {
-				rsa_writePublic(rsaPub, &K);
-				fclose(rsaPub);
+				perror("[GEN] Public key");
+				exit(EXIT_FAILURE);
 			}
+			rsa_writePublic(rsaPub, &K);
+			fclose(rsaPub);
 
 			rsa_shredKey(&K);
 			break;
