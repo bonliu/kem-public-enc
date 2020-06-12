@@ -72,12 +72,13 @@ size_t ske_encrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 	
 	unsigned char *aesCt = malloc(len);	// len = strlen(message) + 1
 	memset(aesCt, 0, len);
-
+  
 	/* Encrypt message (AES) */
 	EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
 	if (1 != EVP_EncryptInit_ex(ctx, EVP_aes_256_ctr(), 0, K->aesKey, iv)) {
 		ERR_print_errors_fp(stderr);
 	}
+
 	int ctLen; // when strlen(message) == 14 --> ctLen = 15
 	if (1 != EVP_EncryptUpdate(ctx, aesCt, &ctLen, inBuf, len)) {
 		ERR_print_errors_fp(stderr);
@@ -118,7 +119,7 @@ size_t ske_encrypt_file(const char* fnout, const char* fnin,
  * set to 0 to erase the file and write it from scratch. */
 
 	/* TODO: write this.  Hint: mmap. */
-
+  
 	/* Open input file */
 	int fdin = open(fnin, O_RDONLY);
 	struct stat sb;
@@ -185,7 +186,7 @@ size_t ske_decrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 		fprintf(stderr, "WRONG MAC\n");
 		return -1;
 	}
-	
+  
 	// Extract iv
 	size_t ivLen = AES_BLOCK_SIZE;
 	unsigned char iv[ivLen];
@@ -201,6 +202,7 @@ size_t ske_decrypt(unsigned char* outBuf, unsigned char* inBuf, size_t len,
 	if (1 != EVP_DecryptInit_ex(ctx, EVP_aes_256_ctr(), 0, K->aesKey, iv)) {
 		ERR_print_errors_fp(stderr);
 	}
+
 	int msgLen;
 	if (1 != EVP_DecryptUpdate(ctx, outBuf, &msgLen, ct, ctLen)) {
 		ERR_print_errors_fp(stderr);

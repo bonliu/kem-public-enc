@@ -13,6 +13,8 @@
 #include "rsa.h"
 #include "prf.h"
 
+#include <errno.h>
+
 static const char* usage =
 "Usage: %s [OPTIONS]...\n"
 "Encrypt or decrypt data.\n\n"
@@ -51,14 +53,15 @@ enum modes {
  * */
 
 #define HASHLEN 32 /* for sha256 */
+// #define KDF_KEY "qVHqkOVJLb7EolR9dsAMVwH1hRCYVx#I"
 
 int kem_encrypt(const char* fnOut, const char* fnIn, RSA_KEY* K)
 {
 	/* TODO: encapsulate random symmetric key (SK) using RSA and SHA256;
 	 * encrypt fnIn with SK; concatenate encapsulation and cihpertext;
 	 * write to fnOut. */
-	
-	/* Generate X */
+
+  /* Generate X */
 	setSeed(0, 0);
 	size_t xLen = rsa_numBytesN(K);
 	unsigned char *X = malloc(xLen); X[xLen - 1] = 0;
@@ -90,7 +93,7 @@ int kem_encrypt(const char* fnOut, const char* fnIn, RSA_KEY* K)
 
 	free(X);
 	free(xEnc);
-	
+  
 	return 0;
 }
 
@@ -129,7 +132,7 @@ int kem_decrypt(const char* fnOut, const char* fnIn, RSA_KEY* K)
 
 	free(X);
 	free(xEnc);
-	
+  
 	return 0;
 }
 
@@ -256,7 +259,7 @@ int main(int argc, char *argv[]) {
 			}
 			rsa_writePublic(rsaPub, &K);
 			fclose(rsaPub);
-			
+
 			rsa_shredKey(&K);
 			break;
 		default:
